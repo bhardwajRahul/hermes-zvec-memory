@@ -3,7 +3,7 @@
 All notable changes to this plugin. Versions match `zvec-memory/plugin.yaml`;
 the release tags point at the commits the plugin-catalog entry pins.
 
-## Unreleased
+## 0.2.1 — 2026-09-26
 
 Fixes from the 2026-09-26 maintenance audit; no change to recall or persistence
 behaviour.
