@@ -205,3 +205,32 @@ behaviour regressed and the campaign manifest stays `complete_with_recorded_limi
 | Fresh engine install in an isolated runtime root | `zg 0.2.2`, launcher runs, manifest + unit written |
 | `hermes memory setup zvec-memory` against the live host | takes over activation, config.yaml gains only the `plugins.zvec-memory` block |
 | Production baseline | re-recorded as revision 5; revision 4 preserved as `production-before-rev4.json` |
+
+## Audit revisions (2026-09-26)
+
+Fixes from a maintenance audit, shipped as **v0.2.1** (`0c57967`); no change to recall,
+persistence or stress behaviour.
+
+**What changed**
+
+- `hermes zvec-memory reindex` now requests a real rebuild: it writes `.reindex-request.json`
+  into the vault and the provider consumes (and removes) it at the next `initialize()`,
+  forcing the rebuild. Previously the subcommand only printed the request — a no-op.
+- `doctor`'s `tasks` check now reads the effective `TasksMax` of `hermes-zvec-memory.service`
+  via `systemctl --user show` (trusted only with `LoadState=loaded`), falling back to the
+  caller's cgroup `pids.max` otherwise. Previously it could report an unrelated shell scope
+  (18 230) while the unit's real ceiling was 1 024.
+- The test venv follows the host: `requirements-test.txt` pins `ruamel.yaml==0.18.17` (the
+  host's `hermes_yaml` config policy), and the host-contract coldness test no longer treats
+  the host's own `skills/` bootstrap as a plugin side effect.
+
+**Verification after the fixes**
+
+| Gate | Result |
+| --- | --- |
+| Offline suite | 408 passed, 10 deselected |
+| Native lane (`ZVEC_RUN_NATIVE=1`, through the production launcher) | 9 passed, 1 skipped |
+| `hermes zvec-memory doctor` on production | healthy; `tasks` reports `hermes-zvec-memory.service TasksMax=1024` |
+| Live `reindex` round-trip | request written (0600) → consumed by the next session's `initialize()` → index rebuilt (manifest rewritten at session init; 19/19 ready, queue 0/0) |
+| Fresh-session recall after deploy | Issue #6123 + `HERMES_USAGE_PYTHON` answered with resolving citations (`sessions/2026-09-12.md:22`, `:132`) |
+| Production baseline | re-recorded as revision 7 (reason `upgrade 2026-09-26`); revision 6 preserved as `production-before-rev6.json` |
