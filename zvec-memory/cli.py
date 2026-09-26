@@ -12,6 +12,8 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List
 
@@ -22,6 +24,13 @@ COMMANDS = (("doctor", "Check config, vault, engine, index, inbox and mirror sta
 
 REQUIRED_CHECKS = ("config", "vault", "engine", "index", "inbox", "mirror", "identity", "tasks")
 MIN_TASK_CEILING = 512
+# The load-bearing ceiling belongs to the memory service, not to the shell that
+# happens to run doctor: the native engine aborts (never degrades) under a small
+# task limit. Keep this equal to engine.UNIT_NAME (equivalence-tested).
+UNIT_NAME = "hermes-zvec-memory.service"
+# Durable half of the deferred rebuild: written by `hermes zvec-memory reindex`,
+# consumed and removed by the provider at its next initialize().
+REINDEX_REQUEST = ".reindex-request.json"
 
 
 def _task_ceiling() -> int | None:
@@ -33,6 +42,31 @@ def _task_ceiling() -> int | None:
             return None if value == "max" else int(value)
     except (OSError, ValueError):
         return None
+
+
+def _unit_tasks_max(run: Callable, unit: str = UNIT_NAME) -> tuple:
+    """(ceiling, source) for the memory service unit, else the caller's cgroup.
+
+    ``systemctl show`` answers even for a unit that does not exist (returning the
+    manager's default TasksMax), so the value is only trusted when systemd reports
+    the unit as loaded; otherwise this degrades to the caller cgroup.
+    """
+    try:
+        rc, out, _err = run(["systemctl", "--user", "show", unit,
+                             "--property=LoadState", "--property=TasksMax"])
+    except Exception:
+        rc, out = 1, ""
+    if rc == 0 and "LoadState=loaded" in out:
+        for line in out.splitlines():
+            if line.startswith("TasksMax="):
+                raw = line.split("=", 1)[1].strip()
+                if raw in ("infinity", "max"):
+                    return None, unit
+                try:
+                    return int(raw), unit
+                except ValueError:
+                    break
+    return _task_ceiling(), "caller cgroup"
 
 
 def _default_runner(args, timeout: int = 15):
@@ -114,8 +148,10 @@ def collect_checks(vault: Path, config: Dict, runner: Callable | None = None) ->
         f"records={state['mirror_records']} pending={pending}")
     add("identity", not state["delivery_failed"],
         "no delivery-failure marker" if not state["delivery_failed"] else "delivery FAILED marker present")
-    ceiling = _task_ceiling()
-    add("tasks", ceiling is None or ceiling >= MIN_TASK_CEILING, f"pids.max={ceiling}")
+    ceiling, source = _unit_tasks_max(run)
+    detail = (f"{source} TasksMax={ceiling}" if source != "caller cgroup"
+              else f"caller cgroup pids.max={ceiling}")
+    add("tasks", ceiling is None or ceiling >= MIN_TASK_CEILING, detail)
     return checks
 
 
@@ -201,6 +237,29 @@ def _hermes_home() -> Path:
     return Path(get_hermes_home())
 
 
+def _request_reindex(vault: Path) -> Path:
+    """Write the rebuild request the provider consumes at its next initialize()."""
+    vault.mkdir(parents=True, exist_ok=True)
+    marker = vault / REINDEX_REQUEST
+    payload = json.dumps({"requested": datetime.now(timezone.utc).isoformat(),
+                          "by": "hermes zvec-memory reindex"})
+    fd, temporary = tempfile.mkstemp(dir=str(vault), prefix=".reindex-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, marker)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return marker
+
+
 def zvec_memory_command(args) -> int:
     sub = getattr(args, "zvec_command", None)
     if sub is None:
@@ -222,7 +281,12 @@ def zvec_memory_command(args) -> int:
         verdict = "healthy" if result["ok"] else "unhealthy: " + ", ".join(result["failures"])
         print(f"\n  {verdict}\n")
     if sub == "reindex":
-        print("  Rebuild requested: the next provider session in this vault reindexes.\n")
+        try:
+            marker = _request_reindex(vault)
+        except OSError as exc:
+            print(f"  Could not write the rebuild request: {exc}\n")
+            return 1
+        print(f"  Rebuild requested ({marker}): the next provider session in this vault reindexes.\n")
         return 0 if result["ok"] else 1
     if sub == "status":
         return 0

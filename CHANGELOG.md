@@ -3,6 +3,27 @@
 All notable changes to this plugin. Versions match `zvec-memory/plugin.yaml`;
 the release tags point at the commits the plugin-catalog entry pins.
 
+## Unreleased
+
+Fixes from the 2026-09-26 maintenance audit; no change to recall or persistence
+behaviour.
+
+- **`hermes zvec-memory reindex` now actually requests a rebuild.** It writes
+  `.reindex-request.json` into the vault and the provider consumes it at the
+  next `initialize()`, forcing the rebuild, instead of only printing that a
+  rebuild was requested. The CLI and provider share the file name and tests
+  lock both constants together.
+- **`doctor`'s `tasks` check reads the service unit, not the caller.** It now
+  reads the effective `TasksMax` of `hermes-zvec-memory.service` via
+  `systemctl --user show` (trusted only with `LoadState=loaded`) and falls back
+  to the caller's cgroup when systemd has no such unit. Previously the check
+  could pass on an unrelated shell scope while the unit's real ceiling was
+  misconfigured.
+- **Test environment:** `requirements-test.txt` pins `ruamel.yaml==0.18.17`,
+  required by the host's current `hermes_yaml` config policy, and the
+  host-contract coldness test no longer treats the host's own `skills/`
+  bootstrap as a plugin side effect.
+
 ## 0.2.0 — 2026-09-11
 
 First tagged release. It covers everything since the repository's initial

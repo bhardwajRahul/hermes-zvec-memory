@@ -16,6 +16,9 @@ pygments==2.21.0
 pytest==8.4.2
 python-dotenv==1.1.1
 PyYAML==6.0.2
+# The host's config policy module (hermes_yaml) imports ruamel.yaml, and the
+# host-contract / hostio-equivalence tests load it; pinned to the host venv.
+ruamel.yaml==0.18.17
 rich==14.1.0
 starlette==1.6.0
 typing-extensions==4.16.0

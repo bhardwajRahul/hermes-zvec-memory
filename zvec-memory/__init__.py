@@ -60,6 +60,9 @@ MAX_QUERY_CHARS = 500
 ENGINE_STATE_SCHEMA = 1
 ENGINE_STATE_FILE = ".zvec-memory-state.json"
 MIRROR_MAP_SCHEMA = 1
+# `hermes zvec-memory reindex` writes this next to the other vault dotfiles; the
+# next provider initialize() consumes it and forces a rebuild (durable request).
+REINDEX_REQUEST_FILE = ".reindex-request.json"
 MAX_STORED_CHARS = 2000
 MAX_TURN_CHARS = 1500
 
@@ -243,9 +246,10 @@ class ZvecMemoryProvider(MemoryProvider):
         # First-run index build in the background: never block agent startup
         # on an embedding-model download. Claimed per-vault so two handles on
         # the same vault never run concurrent builds against each other.
+        reindex_requested = self._consume_reindex_request()
         if not (self._vault / ".zvec-grep" / "manifest.json").exists():
             self._build_index()
-        elif self._mirror_refresh_required:
+        elif reindex_requested or self._mirror_refresh_required:
             self._maybe_reindex(force=True)
         else:
             self._ensure_engine_identity()
@@ -338,6 +342,19 @@ class ZvecMemoryProvider(MemoryProvider):
         version = out.strip().splitlines()[0].strip() if rc == 0 and out.strip() else ""
         self._zg_version_cache = version
         return version or None
+
+    def _consume_reindex_request(self) -> bool:
+        """Honour (and clear) a `hermes zvec-memory reindex` request from disk."""
+        if self._vault is None:
+            return False
+        try:
+            marker = self._vault / REINDEX_REQUEST_FILE
+            if marker.is_file():
+                marker.unlink()
+                return True
+        except OSError:
+            logger.warning("zvec-memory: could not clear the reindex request", exc_info=True)
+        return False
 
     def _index_ready(self) -> bool:
         try:

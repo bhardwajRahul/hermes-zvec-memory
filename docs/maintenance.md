@@ -33,7 +33,11 @@ hermes zvec-memory reindex         # rebuild the index on the next session
 `engine` (launcher runs and reports a version), `index` (`--check-ready`),
 `inbox` (journal mode `wal`, nothing pending), `mirror` (no pending creates or
 deletes, no refresh required), `identity` (no delivery-failure marker) and
-`tasks` (cgroup `pids.max` is at least 512).
+`tasks` (the service unit's effective `TasksMax` when systemd reports it loaded,
+otherwise the caller's cgroup `pids.max`, is at least 512).
+
+`reindex` writes `.reindex-request.json` into the vault; the next provider
+session in that vault consumes it and forces a rebuild.
 
 ## Installing the engine
 

@@ -48,6 +48,33 @@ def make_provider(tmp_path, start_index=False, **overrides):
     return p
 
 
+def test_reindex_request_is_consumed_once(tmp_path):
+    p = make_provider(tmp_path)
+    marker = Path(p._vault) / _mod.REINDEX_REQUEST_FILE
+    assert p._consume_reindex_request() is False
+    marker.write_text("{}")
+    assert p._consume_reindex_request() is True
+    assert not marker.exists()
+    assert p._consume_reindex_request() is False
+    p.shutdown()
+
+
+def test_initialize_consumes_a_pending_reindex_request_and_forces_rebuild(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    index = vault / ".zvec-grep"
+    index.mkdir(parents=True)
+    (index / "manifest.json").write_text("{}")
+    marker = vault / _mod.REINDEX_REQUEST_FILE
+    marker.write_text("{}")
+    p = ZvecMemoryProvider(config={"vault": str(vault), "reindex_min_seconds": 3600})
+    calls = []
+    monkeypatch.setattr(p, "_maybe_reindex", lambda *args, **kwargs: calls.append((args, kwargs)))
+    p.initialize("test-session", hermes_home=str(tmp_path))
+    assert not marker.exists()
+    assert calls == [((), {"force": True})]
+    p.shutdown()
+
+
 def test_native_config_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     p = ZvecMemoryProvider(config={})

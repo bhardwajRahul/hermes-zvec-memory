@@ -147,6 +147,62 @@ def test_reindex_asks_for_a_rebuild_and_reports_state(tmp_path, monkeypatch, cap
     monkeypatch.setattr(cli, "_default_runner", fake_runner())
     assert cli.zvec_memory_command(argparse.Namespace(zvec_command="reindex", json=False)) == 0
     assert "Rebuild requested" in capsys.readouterr().out
+    marker = vault / cli.REINDEX_REQUEST
+    assert marker.is_file()
+    assert json.loads(marker.read_text())["by"] == "hermes zvec-memory reindex"
+    assert (marker.stat().st_mode & 0o777) == 0o600
+
+
+def test_reindex_request_matches_the_provider_constant():
+    cli = load_cli()
+    assert cli.REINDEX_REQUEST == _mod.REINDEX_REQUEST_FILE
+
+
+def test_unit_name_matches_the_engine_constant():
+    import types
+    cli = load_cli()
+    package = types.ModuleType("zvec_engine_probe")
+    package.__path__ = [str(ROOT / "zvec-memory")]
+    sys.modules["zvec_engine_probe"] = package
+    spec = importlib.util.spec_from_file_location("zvec_engine_probe.engine", ROOT / "zvec-memory/engine.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert cli.UNIT_NAME == module.UNIT_NAME
+
+
+def systemctl_runner(tasks_max="1024", loaded=True):
+    def run(args, timeout=15):
+        argv = [str(a) for a in args]
+        if argv and argv[0] == "systemctl":
+            state = "loaded" if loaded else "not-found"
+            return 0, f"LoadState={state}\nTasksMax={tasks_max}\n", ""
+        return fake_runner()(args, timeout)
+    return run
+
+
+def test_tasks_check_reads_the_service_unit(tmp_path):
+    cli = load_cli()
+    checks = cli.collect_checks(healthy_vault(tmp_path), {"zg_bin": "/zg"}, runner=systemctl_runner())
+    tasks = [c for c in checks if c["name"] == "tasks"][0]
+    assert tasks["ok"] is True
+    assert tasks["detail"] == "hermes-zvec-memory.service TasksMax=1024"
+
+
+def test_tasks_check_fails_on_a_low_service_ceiling(tmp_path):
+    cli = load_cli()
+    checks = cli.collect_checks(healthy_vault(tmp_path), {"zg_bin": "/zg"}, runner=systemctl_runner("128"))
+    assert "tasks" in cli.report(checks)["failures"]
+
+
+def test_tasks_check_falls_back_to_the_caller_cgroup(tmp_path, monkeypatch):
+    cli = load_cli()
+    monkeypatch.setattr(cli, "_task_ceiling", lambda: 1024)
+    checks = cli.collect_checks(healthy_vault(tmp_path), {"zg_bin": "/zg"}, runner=systemctl_runner(loaded=False))
+    tasks = [c for c in checks if c["name"] == "tasks"][0]
+    assert tasks["ok"] is True
+    assert tasks["detail"] == "caller cgroup pids.max=1024"
 
 
 @pytest.mark.parametrize("raw", ["$HERMES_HOME/zvec-memory", "${HERMES_HOME}/vault", "~/vault", "/abs/vault", "relative/vault"])
