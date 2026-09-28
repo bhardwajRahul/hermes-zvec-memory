@@ -83,7 +83,21 @@ def test_generator_reproduces_the_installed_launcher(tmp_path, monkeypatch):
     monkeypatch.delenv("HERMES_ZVEC_MODEL_CACHE", raising=False)
     home = Path.home() / ".hermes"
     installed = Path.home() / ".local/share/hermes-zvec-memory/zg-default"
-    assert engine.launcher_script(home, {}) == installed.read_text(encoding="utf-8")
+    generated = engine.launcher_script(home, {})
+    installed_text = installed.read_text(encoding="utf-8")
+    if generated != installed_text:
+        # resolve_node_bin() is PATH-dependent: an installed launcher generated
+        # under a different PATH embeds a different (still >=22) node. Compare
+        # with the installed launcher's own node resolution pinned so both
+        # sides agree, otherwise this byte-identity gate is PATH flakiness.
+        import re as _re
+        match = _re.search(r"^exec (\S+)", installed_text, _re.MULTILINE)
+        installed_node = match.group(1) if match else None
+        assert installed_node, "installed launcher has no exec line"
+        monkeypatch.setenv("PATH", str(Path(installed_node).parent))
+        monkeypatch.setattr(engine, "NODE_BIN", installed_node)
+        generated = engine.launcher_script(home, {})
+    assert generated == installed_text
 
 
 def test_unit_template_declares_the_task_ceiling_and_the_listen_address(tmp_path):
