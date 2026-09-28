@@ -63,7 +63,7 @@ def test_launcher_script_is_byte_identical_to_the_verified_launcher(tmp_path):
         'export ZVEC_GREP_SERVER_URL="http://127.0.0.1:17999/mcp"\n'
         'export ZVEC_GREP_SERVER_TOKEN_FILE="$ZVEC_GREP_HOME/server.token"\n'
         "unset ZVEC_GREP_SERVER_TOKEN ZVEC_GREP_API_KEY ZVEC_GREP_ENDPOINT DASHSCOPE_API_KEY QWEN_API_KEY\n"
-        f'exec /usr/bin/node {tmp_path / "runtime_root/runtime/node_modules/@zvec/zvec-grep/dist/cli/index.js"} "$@"\n')
+        f'exec {engine.resolve_node_bin()} {tmp_path / "runtime_root/runtime/node_modules/@zvec/zvec-grep/dist/cli/index.js"} "$@"\n')
     assert script.endswith('"$@"\n'), "the launcher must forward its arguments"
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -28,6 +29,36 @@ ENGINE_PACKAGE = "@zvec/zvec-grep"
 PINNED_VERSION = "0.2.2"
 NODE_BIN = "/usr/bin/node"
 NPM_BIN = "/usr/bin/npm"
+_MIN_NODE_MAJOR = 22
+
+
+def _node_major(candidate: str) -> int:
+    """Major version of a node executable, or -1 when it cannot be probed."""
+    try:
+        if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
+            return -1
+        proc = subprocess.run([candidate, "--version"], capture_output=True,
+                              text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return -1
+    match = re.match(r"v(\d+)", (proc.stdout or "").strip())
+    return int(match.group(1)) if match else -1
+
+
+def resolve_node_bin() -> str:
+    """A Node >= 22 executable for the launcher; ``/usr/bin/node`` when none found.
+
+    The pinned engine aborts under Node < 22, and distro ``/usr/bin/node`` is
+    often older than a user-managed install. Resolution is call-time (never at
+    import): the offline host contract forbids subprocess use during plugin
+    import, and ``ensure_engine`` — the only caller — already runs subprocesses.
+    """
+    if _node_major(NODE_BIN) >= _MIN_NODE_MAJOR:
+        return NODE_BIN
+    for candidate in (shutil.which("node"),):
+        if candidate and _node_major(candidate) >= _MIN_NODE_MAJOR:
+            return candidate
+    return NODE_BIN
 LAUNCHER_NAME = "zg-default"
 UNIT_NAME = "hermes-zvec-memory.service"
 PROVIDER_NAME = "zvec-memory"
@@ -128,7 +159,7 @@ def launcher_script(hermes_home, config=None) -> str:
         f'export ZVEC_GREP_SERVER_URL="{server_url(config)}"\n'
         'export ZVEC_GREP_SERVER_TOKEN_FILE="$ZVEC_GREP_HOME/server.token"\n'
         "unset ZVEC_GREP_SERVER_TOKEN ZVEC_GREP_API_KEY ZVEC_GREP_ENDPOINT DASHSCOPE_API_KEY QWEN_API_KEY\n"
-        f'exec {NODE_BIN} {entry_path(hermes_home, config)} "$@"\n'
+        f'exec {resolve_node_bin()} {entry_path(hermes_home, config)} "$@"\n'
     )
 
 
@@ -200,7 +231,7 @@ def ensure_engine(hermes_home, config=None) -> dict:
         unit_status = "conflict"
 
     manifest_path = root / MANIFEST_NAME
-    manifest = {"package": ENGINE_PACKAGE, "version": version, "node": NODE_BIN,
+    manifest = {"package": ENGINE_PACKAGE, "version": version, "node": resolve_node_bin(),
                 "entry": str(entry_path(hermes_home, config)),
                 "engine_home": str(engine_home(hermes_home, config)),
                 "server_url": server_url(config), "launcher": str(launcher),
